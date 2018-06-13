@@ -1,6 +1,16 @@
 Motion-detection-OpenCV
 =======================
 
+This is a fork of RobinDavid's motion detection project.
+
+The first goal will be to update the scripts to use cv2 interfaces and compare
+speed to the original.  A second goal will be to adapt the code to work quickly
+on static video rather than process live feeds.
+
+
+## ALL THAT FOLLOWS IS DOCUMENTATION FROM THE ORIGINAL REPO## 
+
+
 Python/OpenCV script that detect motion on webcam and allow record it to a file.
 
 ## The simple way ##
