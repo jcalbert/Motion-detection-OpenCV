@@ -1,24 +1,18 @@
 import cv2.cv as cv
 from datetime import datetime
 import time
+import sys
 
-class MotionDetectorAdaptative():
+from MotionDetector import MotionDetector
+
+class MotionDetectorAdaptative(MotionDetector):
+
+    def __init__(self, source, threshold=25, doRecord=True, showWindows=True):
+        MotionDetector.__init__(self, source=source, threshold=threshold,
+                                doRecord=doRecord, showWindows=showWindows)
     
-    def onChange(self, val): #callback when the user change the detection threshold
-        self.threshold = val
-    
-    def __init__(self,threshold=25, doRecord=True, showWindows=True):
-        self.writer = None
-        self.font = None
-        self.doRecord=doRecord #Either or not record the moving object
-        self.show = showWindows #Either or not show the 2 windows
-        self.frame = None
-    
-        self.capture=cv.CaptureFromCAM(0)
-        self.frame = cv.QueryFrame(self.capture) #Take a frame to init recorder
-        if doRecord:
-            self.initRecorder()
-        
+
+
         self.gray_frame = cv.CreateImage(cv.GetSize(self.frame), cv.IPL_DEPTH_8U, 1)
         self.average_frame = cv.CreateImage(cv.GetSize(self.frame), cv.IPL_DEPTH_32F, 3)
         self.absdiff_frame = None
@@ -27,19 +21,6 @@ class MotionDetectorAdaptative():
         self.surface = self.frame.width * self.frame.height
         self.currentsurface = 0
         self.currentcontours = None
-        self.threshold = threshold
-        self.isRecording = False
-        self.trigger_time = 0 #Hold timestamp of the last detection
-        
-        if showWindows:
-            cv.NamedWindow("Image")
-            cv.CreateTrackbar("Detection treshold: ", "Image", self.threshold, 100, self.onChange)
-        
-    def initRecorder(self): #Create the recorder
-        codec = cv.CV_FOURCC('M', 'J', 'P', 'G')
-        self.writer=cv.CreateVideoWriter(datetime.now().strftime("%b-%d_%H_%M_%S")+".wmv", codec, 5, cv.GetSize(self.frame), 1)
-        #FPS set to 5 because it seems to be the fps of my cam but should be ajusted to your needs
-        self.font = cv.InitFont(cv.CV_FONT_HERSHEY_SIMPLEX, 1, 1, 0, 2, 8) #Creates a font
 
     def run(self):
         started = time.time()
@@ -116,5 +97,11 @@ class MotionDetectorAdaptative():
 
         
 if __name__=="__main__":
-    detect = MotionDetectorAdaptative(doRecord=True)
-    detect.run()
+    fname = sys.argv[-1]
+    if fname=='cam':
+        source = cv.CaptureFromCAM(0)
+    else:
+        source = cv.CaptureFromFile(sys.argv[-1])
+
+    detector = MotionDetectorAdaptative(source, doRecord=False)
+    detector.run()
