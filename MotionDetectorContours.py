@@ -22,58 +22,27 @@ class MotionDetectorAdaptative(MotionDetector):
         self.currentsurface = 0
         self.currentcontours = None
 
-    def run(self):
-        started = time.time()
-        while True:
-            
-            currentframe = cv.QueryFrame(self.capture)
-            instant = time.time() #Get timestamp o the frame
-            
-            self.processImage(currentframe) #Process the image
-            
-            if not self.isRecording:
-                if self.somethingHasMoved():
-                    self.trigger_time = instant #Update the trigger_time
-                    if instant > started +10:#Wait 5 second after the webcam start for luminosity adjusting etc..
-                        print "Something is moving !"
-                        if self.doRecord: #set isRecording=True only if we record a video
-                            self.isRecording = True
-                cv.DrawContours (currentframe, self.currentcontours, (0, 0, 255), (0, 255, 0), 1, 2, cv.CV_FILLED)
-            else:
-                if instant >= self.trigger_time +10: #Record during 10 seconds
-                    print "Stop recording"
-                    self.isRecording = False
-                else:
-                    cv.PutText(currentframe,datetime.now().strftime("%b %d, %H:%M:%S"), (25,30),self.font, 0) #Put date on the frame
-                    cv.WriteFrame(self.writer, currentframe) #Write the frame
-            
-            if self.show:
-                cv.ShowImage("Image", currentframe)
-                
-            c=cv.WaitKey(1) % 0x100
-            if c==27 or c == 10: #Break if user enters 'Esc'.
-                break            
-    
     def processImage(self, curframe):
-            cv.Smooth(curframe, curframe) #Remove false positives
-            
-            if not self.absdiff_frame: #For the first time put values in difference, temp and moving_average
-                self.absdiff_frame = cv.CloneImage(curframe)
-                self.previous_frame = cv.CloneImage(curframe)
-                cv.Convert(curframe, self.average_frame) #Should convert because after runningavg take 32F pictures
-            else:
-                cv.RunningAvg(curframe, self.average_frame, 0.05) #Compute the average
-            
-            cv.Convert(self.average_frame, self.previous_frame) #Convert back to 8U frame
-            
-            cv.AbsDiff(curframe, self.previous_frame, self.absdiff_frame) # moving_average - curframe
-            
-            cv.CvtColor(self.absdiff_frame, self.gray_frame, cv.CV_RGB2GRAY) #Convert to gray otherwise can't do threshold
-            cv.Threshold(self.gray_frame, self.gray_frame, 50, 255, cv.CV_THRESH_BINARY)
+        cv.Smooth(curframe, curframe) #Remove false positives
+        
+        if not self.absdiff_frame: #For the first time put values in difference, temp and moving_average
+            self.absdiff_frame = cv.CloneImage(curframe)
+            self.previous_frame = cv.CloneImage(curframe)
+            cv.Convert(curframe, self.average_frame) #Should convert because after runningavg take 32F pictures
+        else:
+            cv.RunningAvg(curframe, self.average_frame, 0.05) #Compute the average
+        
+        cv.Convert(self.average_frame, self.previous_frame) #Convert back to 8U frame
+        
+        cv.AbsDiff(curframe, self.previous_frame, self.absdiff_frame) # moving_average - curframe
+        
+        cv.CvtColor(self.absdiff_frame, self.gray_frame, cv.CV_RGB2GRAY) #Convert to gray otherwise can't do threshold
+        cv.Threshold(self.gray_frame, self.gray_frame, 50, 255, cv.CV_THRESH_BINARY)
 
-            cv.Dilate(self.gray_frame, self.gray_frame, None, 15) #to get object blobs
-            cv.Erode(self.gray_frame, self.gray_frame, None, 10)
+        cv.Dilate(self.gray_frame, self.gray_frame, None, 15) #to get object blobs
+        cv.Erode(self.gray_frame, self.gray_frame, None, 10)
 
+        self.motion_level = self.somethingHasMoved()
             
     def somethingHasMoved(self):
         
@@ -87,13 +56,15 @@ class MotionDetectorAdaptative(MotionDetector):
             self.currentsurface += cv.ContourArea(contours)
             contours = contours.h_next()
         
-        avg = (self.currentsurface*100)/self.surface #Calculate the average of contour area on the total size
+        avg = 1.0 * self.currentsurface / self.surface #Calculate the average of contour area on the total size
         self.currentsurface = 0 #Put back the current surface to 0
         
-        if avg > self.threshold:
-            return True
-        else:
-            return False
+        return avg
+
+    def visualize(self):
+        vis_frame = cv.CloneImage(self.frame)
+        cv.DrawContours(vis_frame, self.currentcontours, (0, 0, 255), (0, 255, 0), 1, 2, cv.CV_FILLED)
+        return vis_frame         
 
         
 if __name__=="__main__":

@@ -1,6 +1,7 @@
-import cv2.cv as cvs
+import cv2.cv as cv
 from datetime import datetime
 import time
+import sys
 
 from MotionDetector import MotionDetector
 
@@ -22,39 +23,6 @@ class MotionDetectorInstantaneous(MotionDetector):
         self.height = self.frame.height
         self.nb_pixels = self.width * self.height
         
-    def run(self):
-        started = time.time()
-        while True:
-            
-            curframe = cv.QueryFrame(self.capture)
-            instant = time.time() #Get timestamp o the frame
-            
-            self.processImage(curframe) #Process the image
-            
-            if not self.isRecording:
-                if self.somethingHasMoved():
-                    self.trigger_time = instant #Update the trigger_time
-                    if instant > started +5:#Wait 5 second after the webcam start for luminosity adjusting etc..
-                        print datetime.now().strftime("%b %d, %H:%M:%S"), "Something is moving !"
-                        if self.doRecord: #set isRecording=True only if we record a video
-                            self.isRecording = True
-            else:
-                if instant >= self.trigger_time +10: #Record during 10 seconds
-                    print datetime.now().strftime("%b %d, %H:%M:%S"), "Stop recording"
-                    self.isRecording = False
-                else:
-                    cv.PutText(curframe,datetime.now().strftime("%b %d, %H:%M:%S"), (25,30),self.font, 0) #Put date on the frame
-                    cv.WriteFrame(self.writer, curframe) #Write the frame
-            
-            if self.show:
-                cv.ShowImage("Image", curframe)
-                cv.ShowImage("Res", self.res)
-                
-            cv.Copy(self.frame2gray, self.frame1gray)
-            c=cv.WaitKey(1) % 0x100
-            if c==27 or c == 10: #Break if user enters 'Esc'.
-                break            
-    
     def processImage(self, frame):
         cv.CvtColor(frame, self.frame2gray, cv.CV_RGB2GRAY)
         
@@ -67,15 +35,16 @@ class MotionDetectorInstantaneous(MotionDetector):
         cv.MorphologyEx(self.res, self.res, None, None, cv.CV_MOP_CLOSE)
         cv.Threshold(self.res, self.res, 10, 255, cv.CV_THRESH_BINARY_INV)
 
+        self.motion_level = self.somethingHasMoved()
+
     def somethingHasMoved(self):
-        nb=0 #Will hold the number of black pixels
-        min_threshold = (self.nb_pixels/100) * self.threshold #Number of pixels for current threshold
-        nb = self.nb_pixels - cv.CountNonZero(self.res)
-        if (nb) > min_threshold:
-           return True
-        else:
-           return False
+        nb = self.nb_pixels - cv.CountNonZero(self.res)        
+        return 1.0 * nb / self.nb_pixels
         
+    def visualize(self):
+        return self.res
+
+
 if __name__=="__main__":
     fname = sys.argv[-1]
     if fname=='cam':
@@ -84,3 +53,4 @@ if __name__=="__main__":
         source = cv.CaptureFromFile(sys.argv[-1])
 
     detector = MotionDetectorInstantaneous(source, doRecord=False)
+    detector.run()
