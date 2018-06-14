@@ -1,4 +1,5 @@
 import cv2.cv as cv
+import cv2
 from datetime import datetime
 import time
 
@@ -11,6 +12,9 @@ logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
 log = logging.getLogger()
 COOLDOWN_FRAMES = 20 # Num of non-moving frames before recording stops
 
+DOWNSAMPLE = True
+
+CV2 = True
 class MotionDetector():
 
     def __init__(self, source, threshold, doRecord=True, showWindows=True):
@@ -20,13 +24,17 @@ class MotionDetector():
 
         #Internal state common to all detectors
         #Used for motion detection itself
-        self.frame_no = 0   #Frame counter, used instead of time()
-        self.frame = cv.QueryFrame(self.capture) #Take a frame to init recorder
+        self.frame_no = 1   #Frame counter, used instead of time()
+
+        if CV2:
+           _,self.frame = self.capture.read() #Take a frame to init recorder 
+        else:
+           self.frame = cv.QueryFrame(self.capture) #Take a frame to init recorder
+        
+
         self.motion_level = 0.0 #All detectors quantify level of motion from 0 to 1
-        self.record = True #Toggle whether activity is detected
         self.cooldown = 0
 
-        self.font = None
         self.doRecord=doRecord #Either or not record the moving object
         self.show = showWindows #Either or not show the 2 windows
         
@@ -68,28 +76,37 @@ class MotionDetector():
     def run(self):
         #raise NotImplementedError("Subclasses must implement this method")
         while self.running:
-            this_frame = cv.QueryFrame(self.capture)
-            
+            log.debug("Frame: {}".format(self.frame_no))
+            if CV2:
+                self.running, this_frame = self.capture.read()
+            else:
+                this_frame = cv.QueryFrame(self.capture)
+
+            self.frame = this_frame
+
             self.processImage(this_frame) #Process the image and update internal state
             if self.motion_level > self.threshold:
                 if self.cooldown == 0:
-                    log.info("Start Recording")#start recording
+                    log.info("Start: {}".format(self.frame_no))#start recording
                 self.cooldown = COOLDOWN_FRAMES
 
             if self.cooldown > 0:
                 pass#write a frame
                 if self.cooldown == 1:
-                    log.info("Stop Recording")
+                    log.info("Stop: {}".format(self.frame_no))
                 self.cooldown -= 1                                
             
             if self.show:
                 vis_frame = self.visualize()
-                cv.ShowImage("Image", vis_frame)
-#                cv.ShowImage("Res", self.res)
+                if CV2:
+                    cv2.imshow("Image", vis_frame)
+                else:
+                    cv.ShowImage("Image", vis_frame)
+
                 c=cv.WaitKey(1) % 0x100
                 if c==27 or c == 10: #Break if user enters 'Esc'.
                     self.running = False
-    
+            self.frame_no += 1
     #Return an image representing the internal state of the processor
     def visualize(self):
         return self.frame
