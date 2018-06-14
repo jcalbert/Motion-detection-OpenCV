@@ -76,7 +76,8 @@ class MotionDetector():
     def run(self):
         #raise NotImplementedError("Subclasses must implement this method")
         while self.running:
-            log.debug("Frame: {}".format(self.frame_no))
+#            log.debug("Frame: {}".format(self.frame_no))
+            log.debug("Movement: {}".format(self.motion_level))            
             if CV2:
                 self.running, this_frame = self.capture.read()
             else:

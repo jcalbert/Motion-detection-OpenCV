@@ -12,8 +12,8 @@ CV2 = True
 
 EWMA_ALPHA = 0.05 #Factor for exponentially accumulated motion blur
 
-DILATE_ITERS = 15 #Number of 3x3 dilation iters
-ERODE_ITERS = 10 #Number of 3x3 dilation iters
+DILATE_ITERS = 10 #Number of 3x3 dilation iters
+ERODE_ITERS = 1 #Number of 3x3 dilation iters
 
 
 CONTOUR_COLOR = (0,0,255)
@@ -83,7 +83,7 @@ class MotionDetectorAdaptative(MotionDetector):
             contours, tree = cv2.findContours(self.gray_frame,
                                               mode = cv2.RETR_EXTERNAL,
                                               method = cv2.CHAIN_APPROX_SIMPLE)
-            moving_area = sum(map(cv2.contourArea, contours[0]))
+            moving_area = sum(map(cv2.contourArea, contours))
 
         else:
             storage = cv.CreateMemStorage(0)
@@ -95,6 +95,7 @@ class MotionDetectorAdaptative(MotionDetector):
             while contours: #For all contours compute the area
                 moving_area += cv.ContourArea(contours)
                 contours = contours.h_next()
+
         self.contours = contours
         self.contour_tree = tree #Save contours
         avg = 1.0 * moving_area / self.area #Calculate the average of contour area on the total size
@@ -131,5 +132,5 @@ if __name__=="__main__":
         else:
             source = cv.CaptureFromFile(sys.argv[-1])
 
-    detector = MotionDetectorAdaptative(source, doRecord=False)
+    detector = MotionDetectorAdaptative(source, doRecord=False, showWindows=False)
     detector.run()
