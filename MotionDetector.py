@@ -1,4 +1,7 @@
-import cv2.cv as cv
+try:
+    import cv2.cv as cv
+except:
+    pass
 import cv2
 from datetime import datetime
 import time
@@ -13,8 +16,28 @@ log = logging.getLogger()
 COOLDOWN_FRAMES = 20 # Num of non-moving frames before recording stops
 
 DOWNSAMPLE = True
+MIN_WIDTH = 256
 
 CV2 = True
+
+class MotionQuantifier():
+    
+    def __init__(self, init_frame):
+        self.frame = init_frame
+        self.motion_level = 0.0 #All detectors quantify level of motion from 0 to 1
+
+    def step(self, frame):
+        raise NotImplementedError("""Subclasses should process the frame,
+                                  update internal state and return a motion 
+                                  level""")
+        return self.motion_level
+
+    def visualize(self):
+        raise NotImplementedError("""If implemented, this should return a
+                                  visual representation of the qunatifier's
+                                  state.""")
+    
+
 class MotionDetector():
 
     def __init__(self, source, threshold, doRecord=True, showWindows=True):
@@ -27,7 +50,10 @@ class MotionDetector():
         self.frame_no = 1   #Frame counter, used instead of time()
 
         if CV2:
-           _,self.frame = self.capture.read() #Take a frame to init recorder 
+            _,self.frame = self.capture.read() #Take a frame to init recorder 
+            if DOWNSAMPLE:
+                while max(self.frame.shape[0:2]) > MIN_WIDTH * 2:
+                    self.frame = cv2.pyrDown(self.frame)
         else:
            self.frame = cv.QueryFrame(self.capture) #Take a frame to init recorder
         
@@ -46,10 +72,10 @@ class MotionDetector():
         
         self.threshold = threshold
         if showWindows:
-            cv.NamedWindow("Image")
-            cv.CreateTrackbar("Detection treshold: ",
+            cv2.namedWindow("Image")
+            cv2.createTrackbar("Detection treshold: ",
                               "Image",
-                              self.threshold,
+                              int(self.threshold * 100),
                               100,
                               lambda v: self.onChange({'threshold': v / 100.}))
     
@@ -72,17 +98,22 @@ class MotionDetector():
 
         return writer
 
-
     def run(self):
         #raise NotImplementedError("Subclasses must implement this method")
         while self.running:
-#            log.debug("Frame: {}".format(self.frame_no))
+            log.debug("Frame: {}".format(self.frame_no))
             log.debug("Movement: {}".format(self.motion_level))            
             if CV2:
                 self.running, this_frame = self.capture.read()
+                if not self.running:
+                    break
             else:
                 this_frame = cv.QueryFrame(self.capture)
 
+            if DOWNSAMPLE:
+                while max(this_frame.shape[0:2]) > MIN_WIDTH * 2:
+                    this_frame = cv2.pyrDown(this_frame)
+            
             self.frame = this_frame
 
             self.processImage(this_frame) #Process the image and update internal state
@@ -97,14 +128,14 @@ class MotionDetector():
                     log.info("Stop: {}".format(self.frame_no))
                 self.cooldown -= 1                                
             
-            if self.show:
+            if self.show or self.cooldown > 0:
                 vis_frame = self.visualize()
                 if CV2:
                     cv2.imshow("Image", vis_frame)
                 else:
                     cv.ShowImage("Image", vis_frame)
 
-                c=cv.WaitKey(1) % 0x100
+                c=cv2.waitKey(1) % 0x100
                 if c==27 or c == 10: #Break if user enters 'Esc'.
                     self.running = False
             self.frame_no += 1
