@@ -1,8 +1,5 @@
-try:
-    import cv2.cv as cv
-except:
-    pass
 import cv2
+
 from datetime import datetime
 import time
 
@@ -17,8 +14,6 @@ COOLDOWN_FRAMES = 20 # Num of non-moving frames before recording stops
 
 DOWNSAMPLE = True
 MIN_WIDTH = 256
-
-CV2 = True
 
 class MotionQuantifier():
     
@@ -49,13 +44,10 @@ class MotionDetector():
         #Used for motion detection itself
         self.frame_no = 1   #Frame counter, used instead of time()
 
-        if CV2:
-            _,self.frame = self.capture.read() #Take a frame to init recorder 
-            if DOWNSAMPLE:
-                while max(self.frame.shape[0:2]) > MIN_WIDTH * 2:
-                    self.frame = cv2.pyrDown(self.frame)
-        else:
-           self.frame = cv.QueryFrame(self.capture) #Take a frame to init recorder
+        _,self.frame = self.capture.read() #Take a frame to init recorder 
+        if DOWNSAMPLE:
+            while max(self.frame.shape[0:2]) > MIN_WIDTH * 2:
+                self.frame = cv2.pyrDown(self.frame)
         
 
         self.motion_level = 0.0 #All detectors quantify level of motion from 0 to 1
@@ -84,12 +76,13 @@ class MotionDetector():
         for k,v in keyvals.iteritems():
             setattr(self, k, v)
 
-    def onInterrupt(self, signal, frame):
+    def onInterrupt(self, sig, frame):
         self.running = False
 
 
     #Not sure I even want to use this
     def initRecorder(self): #Create the recorder
+        raise NotImplementedError("This relies on the old interface.")
         codec = cv.CV_FOURCC('M', 'J', 'P', 'G') #('W', 'M', 'V', '2')
         writer = cv.CreateVideoWriter(datetime.now().strftime("%b-%d_%H_%M_%S")+".wmv",
                                          codec, 5, cv.GetSize(self.frame), 1)
@@ -103,12 +96,10 @@ class MotionDetector():
         while self.running:
             log.debug("Frame: {}".format(self.frame_no))
             log.debug("Movement: {}".format(self.motion_level))            
-            if CV2:
-                self.running, this_frame = self.capture.read()
-                if not self.running:
-                    break
-            else:
-                this_frame = cv.QueryFrame(self.capture)
+
+            self.running, this_frame = self.capture.read()
+            if not self.running:
+                break
 
             if DOWNSAMPLE:
                 while max(this_frame.shape[0:2]) > MIN_WIDTH * 2:
@@ -130,10 +121,7 @@ class MotionDetector():
             
             if self.show or self.cooldown > 0:
                 vis_frame = self.visualize()
-                if CV2:
-                    cv2.imshow("Image", vis_frame)
-                else:
-                    cv.ShowImage("Image", vis_frame)
+                cv2.imshow("Image", vis_frame)
 
                 c=cv2.waitKey(1) % 0x100
                 if c==27 or c == 10: #Break if user enters 'Esc'.
