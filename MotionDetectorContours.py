@@ -3,8 +3,16 @@ from datetime import datetime
 import time
 import sys
 
-from MotionDetector import MotionDetector, MotionDetectorOLD, MotionQuantifier
+from MotionDetector import MotionDetector, MotionQuantifier
 import numpy as np
+
+
+
+from subprocess import Popen
+import os
+import tempfile
+import time
+
 
 from scipy.ndimage import maximum_filter1d
 
@@ -15,7 +23,7 @@ HOLE_COLOR = (0, 255, 0)
 class ContourQuantifier(MotionQuantifier):
  
     def __init__(self, init_frame, alpha=0.05,
-                 dilate_amt = .1, erode_amt = 0.05):
+                 dilate_amt = .03, erode_amt = 0.02):
         """
         alpha - decay constant for ewma image
         
@@ -32,38 +40,7 @@ class ContourQuantifier(MotionQuantifier):
         self.step(init_frame)
         
     def step(self, curframe):
-        #Not necessary with downsampled data
-        #cv2.GaussianBlur(curframe, (3,3), sigmaX=0, sigmaY=0, dst=curframe) #Remove false positives
-        
-        
-#        CURRENT:
-        #incorporate new input to EWMA
-        #put ewma into previous_frame
-        #put difference between input and prev into absdiff
-        #convert diff to gray, put into gray_frame
-        #apply threshold to gray image
-        #dilate gray
-        #erode gray
-        
-        #find countours
-        #sum area of contours
-        #normalize area, put into motion_level
-        #return motion_level
-        
-        
-#        New:
-        #incorporate new input to EWMA
-        #put ewma into previous_frame
-        #put difference between input and prev into absdiff
-        #convert diff to gray, put into gray_frame
-        #apply threshold to gray image
-        #dilate gray
-        #erode gray
-        
-        #find countours
-        #sum area of contours
-        #normalize area, put into motion_level
-        #return motion_level
+
         cv2.accumulateWeighted(curframe, self.slow_avg, self.alpha) #Compute the average
         
         abs_diff = cv2.absdiff(curframe, self.slow_avg.astype('u1')) # moving_average - curframe
@@ -95,12 +72,11 @@ class ContourQuantifier(MotionQuantifier):
         return self.motion_level
     
     def visualize(self):
-        vis_frame = self.slow_avg.astype('u1')
+        vis_frame = self.slow_avg.astype('u1').copy()
 
-        mask = vis_frame[..., 0].copy()
-        cv2.drawContours(mask, self._contours, -1, 255, cv2.FILLED);
-        mask = (mask == 255)
-        vis_frame[mask] = self._lastframe[mask]
+        mask = vis_frame * 0
+        cv2.drawContours(mask, self._contours, -1, (255,255,255), cv2.FILLED);
+        vis_frame[mask==255] = self._lastframe[mask==255]
         
         cv2.drawContours(vis_frame, self._contours,
                 hierarchy=self._contour_tree,
@@ -110,61 +86,80 @@ class ContourQuantifier(MotionQuantifier):
         return vis_frame
 
 
-def get_motion_series(capture, max_width = 256, frame_skip = 1):
+def get_motion_series(capture, n_max = None):
+    
     n_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
     motion_series = np.zeros(n_frames)
     
-    frame = capture.read()[1]
-    if max_width:
-        downsample_factor = np.log2(max(frame.shape[0:2]) / max_width)
-        downsample_factor = max(0,int(downsample_factor))
-    
-    def downsample(f):
-        for n in range(downsample_factor):
-            f = cv2.pyrDown(f)
-        return f
-    
-    quant = ContourQuantifier(downsample(frame))
-    #motion_series[1:] = [quant.step(downsample(capture.read()[1])) for i in range(1,n_frames)]
-    for i in range(1, n_frames):
-        new_frame = capture.read()[1]
-        if i%frame_skip == 0:
-            motion_series[i] = quant.step(downsample(new_frame))
-        else:
-            motion_series[i] = motion_series[i-1]
-
-        if i%(n_frames // 100) == 0:
-            print i
+    if n_max:
+        n_frames = min(n_max, n_frames)
+        
+    detector = MotionDetector(capture, 0.025,
+                              ContourQuantifier, quant_args={'alpha':0.2})
+    cv2.namedWindow("Preview")
+    dt = [0,time.time()]
+    for i in range(1,n_frames):
+        detector.step()
+        motion_series[i] = detector.quant.motion_level
+        
+        dt[1] = time.time()
+        if dt[1]-dt[0] > 2.0:
+            dt[0] = dt[1]
+        #if i%(n_frames // 100) == 0:
+            print "Frame {}/{}".format(i, n_frames)
+            if True:
+                cv2.imshow("Preview",detector.visualize())
+                _=cv2.waitKey(1) % 0x100
+            
     return motion_series
-
 
 def get_clips(series, threshold, warmup = 30, cooldown = 30):    
     maxed_series = maximum_filter1d(series,
                                     warmup+cooldown+1,
                                     origin=(-warmup + cooldown)/2)
     moving_frames = (maxed_series > threshold).astype('float')
+    moving_frames[0] = 0
+    moving_frames[-1] = 0
     on_off = np.diff(moving_frames)
     starts = np.where(on_off == 1)[0]
     stops  = np.where(on_off == -1)[0]
 
     return zip(starts, stops)
 
-from subprocess import Popen
-import os
-import tempfile
-def split_vid(fname, clip_bounds):
-    tmpdir = tempfile.mkdtemp()
+def split_vid(fpath, clip_bounds):
+    cap = cv2.VideoCapture(fpath)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    
+    fdir, fname = os.path.split(fpath)
+    
+    dst = os.path.join(fdir, fname.split('.')[0] + '_CLIPS')
+
+    os.mkdir(dst)
+    
     cmd_base = ['mencoder',
-                fname,
+                fpath,
                 '-oac','pcm',
                 '-ovc','copy']
-    for i, cb in enumerate(clip_bounds):
-        this_file = 'clip_' + str(i).zfill(5) +'.'+ fname.split('.')[-1]
-        this_out = os.path.join(tmpdir, this_file)
-        this_cmd = ['-ss', str(cb[0]),
-                    '-endpos', str(cb[1]),
-                    '-o', this_out]
+
+    if '.mts' in fpath.lower():
+        cmd_base.append('-demuxer')
+        cmd_base.append('lavf')
+        #cmd_base.append('-of')
+        #cmd_base.append('lavf=mp4')
         
+        
+    for i, cb in enumerate(clip_bounds):
+
+        this_file = 'clip_' + str(i).zfill(5) +'.'+ fname.split('.')[-1]
+        this_out = os.path.join(dst, this_file)
+        
+        start_time = round(cb[0] / fps, 2)
+        end_time = round( (cb[1]-cb[0]) / fps, 2)
+        
+        this_cmd = ['-ss', str(start_time),
+                    '-endpos', str(end_time),
+                    '-o', this_out]
+        print "Writing: {}".format(this_out)
         proc = Popen(cmd_base + this_cmd)
         proc.wait()
 
@@ -177,13 +172,32 @@ def make_edit(fname):
     #use mencoder to extract segments
     #use mencoder to stitch together segments
     pass
+
+
+from imutils.video import FileVideoStream
+from queue import Queue
+class FVS_CAP(FileVideoStream):
+    def __init__(self, name, queueSize=128, pre_filter=None):
+        FileVideoStream.__init__(self, name, queueSize=queueSize)
+
+        self._cap = cv2.VideoCapture(name)
+        time.sleep(1.0)
+        
+    def get(self, prop):
+        return self._cap.get(prop)
+    
+    def read(self):
+        return (self.more(), FileVideoStream.read(self))
+
 if __name__=="__main__":
     fname = sys.argv[-1]
 
     if fname=='cam':
         source = cv2.VideoCapture()
     else:
-        source = cv2.VideoCapture(sys.argv[-1])
+        #source = cv2.VideoCapture(fname)
+        source = FVS_CAP(fname, 16).start()
+        y = get_motion_series(source)
 
     #detector = MotionDetectorAdaptative(source, threshold = 0.02,
     #                                    doRecord=False, showWindows=True)
