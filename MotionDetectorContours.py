@@ -93,9 +93,14 @@ def get_motion_series(capture, n_max = None):
     
     if n_max:
         n_frames = min(n_max, n_frames)
-        
-    detector = MotionDetector(capture, 0.025,
-                              ContourQuantifier, quant_args={'alpha':0.2})
+
+    bgsub = cv2.createBackgroundSubtractorMOG2(history=500, detectShadows=False)
+#    bgsub = cv2.createBackgroundSubtractorKNN(history=500, detectShadows=False)
+    detector = MotionDetector(source, 0.02, BGSubQuantifier,
+                              quant_args = {'bgsub':bgsub},
+                              showWindows=True)
+#    detector = MotionDetector(capture, 0.025,
+#                              ContourQuantifier, quant_args={'alpha':0.2})
     cv2.namedWindow("Preview")
     dt = [0,time.time()]
     for i in range(1,n_frames):
@@ -175,7 +180,6 @@ def make_edit(fname):
 
 
 from imutils.video import FileVideoStream
-from queue import Queue
 class FVS_CAP(FileVideoStream):
     def __init__(self, name, queueSize=128, pre_filter=None):
         FileVideoStream.__init__(self, name, queueSize=queueSize)
@@ -189,14 +193,65 @@ class FVS_CAP(FileVideoStream):
     def read(self):
         return (self.more(), FileVideoStream.read(self))
 
+
+
+
+class BGSubQuantifier(MotionQuantifier):
+
+    def __init__(self, init_frame, bgsub=None, 
+                 dilate_amt = .01, erode_amt = 0.01):
+        assert isinstance(bgsub, cv2.BackgroundSubtractor)
+        
+        MotionQuantifier.__init__(self)
+
+        self.bgsub = bgsub
+
+
+        self._scale = int((init_frame.shape[0] * init_frame.shape[1])**.5)
+
+        self.dilate_iters = int(dilate_amt * self._scale)
+        self.erode_iters = int(erode_amt * self._scale)
+        
+        self._fgmask = self.bgsub.apply(init_frame)
+        
+        self.step(init_frame)
+
+
+                
+    def step(self, curframe):
+        self._lastframe = curframe
+        self.bgsub.apply(curframe, self._fgmask)
+
+        cv2.dilate(self._fgmask, kernel=None, iterations=self.dilate_iters,
+                   dst = self._fgmask)
+        
+        cv2.erode(self._fgmask, kernel=None, iterations=self.erode_iters,
+                  dst = self._fgmask)
+        
+        self.motion_level = (self._fgmask == 255).mean()
+
+        return self.motion_level
+    
+    def visualize(self):
+        fg = self._fgmask == 255
+        vis_frame = self._lastframe.copy()
+        vis_frame[~fg] /= 2
+        #vis_frame = self.bgsub.getBackgroundImage().copy()
+        
+ #       vis_frame[self._fgmask] = self._lastframe[self._fgmask]
+ #       vis_frame[~self._fgmask] /= 2
+
+        return vis_frame
+
+
 if __name__=="__main__":
     fname = sys.argv[-1]
 
     if fname=='cam':
         source = cv2.VideoCapture()
     else:
-        #source = cv2.VideoCapture(fname)
-        source = FVS_CAP(fname, 16).start()
+        source = cv2.VideoCapture(fname)
+        #source = FVS_CAP(fname, 16).start()
         y = get_motion_series(source)
 
     #detector = MotionDetectorAdaptative(source, threshold = 0.02,
