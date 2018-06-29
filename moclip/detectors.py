@@ -1,38 +1,54 @@
 import cv2
-
-from datetime import datetime
 import time
-
-import signal
 
 import logging
 import sys
 
 import numpy  as np
+
+
+
+from subprocess import Popen
+import os
+import tempfile
+
+from scipy.ndimage import maximum_filter1d
+
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 log = logging.getLogger()
+
 COOLDOWN_FRAMES = 20 # Num of non-moving frames before recording stops
 
+
+#For now, hard code the size of image used for detection
 DOWNSAMPLE = True
+SCALEDOWN = True
 MIN_WIDTH = 256
-SCALEINSTEAD = True
 
-def sampdown(im):
-    big_edge = max(im.shape[0], im.shape[1])
-    shrink_factor = 2**int(np.log2(big_edge / MIN_WIDTH))
-    
-    
-    if DOWNSAMPLE:
-        if SCALEINSTEAD:
-            fac = 1.0 / shrink_factor
-            im = cv2.resize(im, dsize=None, fx=fac, fy=fac, 
-                            interpolation=cv2.INTER_AREA)
+if DOWNSAMPLE:
+    if SCALEDOWN:
+        def sampdown(im):
+            big_edge = max(im.shape[0], im.shape[1])
+            shrink_factor = 2**int(np.log2(big_edge / MIN_WIDTH))
+                fac = 1.0 / shrink_factor
+                im = cv2.resize(im, dsize=None, fx=fac, fy=fac, 
+                                interpolation=cv2.INTER_AREA)
+            return im
 
-        else:
+    else:
+        def sampdown(im):
+            big_edge = max(im.shape[0], im.shape[1])
+            shrink_factor = 2**int(np.log2(big_edge / MIN_WIDTH))
             for _ in range(int(np.log2(shrink_factor))):
                 im = cv2.pyrDown(im)
-    return im
-            
+
+            return im
+
+else:
+    def sampdown(im):
+        return im
+
+
 class MotionQuantifier():    
     """
     Class takes in a sequence of frames and tracks a per-frame level of movement.
@@ -72,11 +88,28 @@ class MotionQuantifier():
                                   state.""")
 
 
-
 class MotionDetector():
+    """
+    This base class combines a video capture source and a quantifier.  It
+    exposes a method step() which consumes one frame and updates the
+    quantifier's internal state and level of motion.  It also incluse 
+    a run() funciton which repeats step() until all frames are consumed.
 
-    def __init__(self, source, threshold, quantifier, quant_args={},
-                 doRecord=False, showWindows=True):
+    For now it contains an internal mechanism for detecting when motion
+    has started or stopped.  Eventually this will be abstracted out.
+
+    ...
+    
+
+    Methods
+    -------
+    step(frame)
+        Update the quantifier by `frame`.
+    visualize()
+        Returns a visualization of the quantifier's state.
+
+    """
+    def __init__(self, source, threshold, quantifier, quant_args={}):
 
         self.capture = source
         self.running = True
@@ -88,34 +121,14 @@ class MotionDetector():
         _,init_frame = self.capture.read() #Take a frame to init recorder 
         init_frame = sampdown(init_frame)
         
-
         self.quant = quantifier(init_frame, **quant_args)
 
         self.cooldown = 0
 
-        self.doRecord = doRecord #Either or not record the moving object
-        self.show = showWindows #Either or not show the 2 windows
-        
-
-        if doRecord:
-            self.writer = self.initRecorder()
-        
         self.trigger_time = 0 #Hold timestamp of the last detection
         
         self.threshold = threshold
-        if showWindows:
-            cv2.namedWindow("Image")
-            cv2.createTrackbar("Detection treshold: ",
-                              "Image",
-                              int(self.threshold * 100),
-                              100,
-                              lambda v: self.onChange({'threshold': v / 100.}))
-    
-    
-    #This is only really used for interactivity.
-    def onChange(self, keyvals):
-        for k,v in keyvals.iteritems():
-            setattr(self, k, v)
+
 
     def onInterrupt(self, sig, frame):
         self.running = False
@@ -164,14 +177,6 @@ class MotionDetector():
                 if self.cooldown == 1:
                     log.info("Stop: {}".format(self.frame_no))
                 self.cooldown -= 1                                
-            
-            if self.show:
-                vis_frame = self.visualize()
-                cv2.imshow("Image", vis_frame)
-
-                c=cv2.waitKey(1) % 0x100
-                if c==27 or c == 10: #Break if user enters 'Esc'.
-                    self.running = False
  
     #Embelling the qunatifier's visualization if necessary
     def visualize(self):
@@ -182,4 +187,148 @@ class MotionDetector():
             center = (int(radius*1.5), ) * 2
             cv2.circle(vis_frame, center, radius, (0,0,255), thickness=-1)
         return vis_frame
+    
+
+CONTOUR_COLOR = (0,0,255)
+HOLE_COLOR = (0, 255, 0)
+
+class ContourQuantifier(MotionQuantifier):
+    """
+    Quantifier compares current frame to an Exponentially Weighted Moving
+    Average (EWMA).  The absolute difference is thresholded, dilated,
+    eroded.  Contour lines are drawn for this image, and the motion level
+    is the fractional area covered by top-level contours.
+
+    Credit to github users RobinDavid and mattwilliamson for the aglorithm.
+    """
+    def __init__(self, init_frame, alpha=0.05,
+                 dilate_amt = .03, erode_amt = 0.02):
+        """
+        alpha - decay constant for ewma image, between 0 and 1.
+        dilate_amt - relative size of motion area dilation, between 0 and 1. 
+        erode_amt - relative size of motion area dilation, between 0 and 1.
+        """
+        MotionQuantifier.__init__(self)
+
+        self._scale = int((init_frame.shape[0] * init_frame.shape[1])**.5)
+
+        self.alpha = alpha
+        self.dilate_iters = int(dilate_amt * self._scale)
+        self.erode_iters = int(erode_amt * self._scale)
         
+        self.slow_avg = init_frame * 1.0
+        self.step(init_frame)
+        
+    def step(self, curframe):
+
+        cv2.accumulateWeighted(curframe, self.slow_avg, self.alpha) #Compute the average
+        
+        abs_diff = cv2.absdiff(curframe, self.slow_avg.astype('u1')) # moving_average - curframe
+
+        abs_diff_gray = cv2.cvtColor(abs_diff, cv2.COLOR_BGR2GRAY) #Convert to gray
+
+        cv2.threshold(abs_diff_gray, 50, 255, cv2.THRESH_BINARY,
+                      dst = abs_diff_gray)
+
+        cv2.dilate(abs_diff_gray, kernel=None, iterations=self.dilate_iters,
+                   dst = abs_diff_gray)
+        
+        cv2.erode(abs_diff_gray, kernel=None, iterations=self.erode_iters,
+                  dst = abs_diff_gray)
+
+        _, contours, tree = cv2.findContours(abs_diff_gray,
+                                             mode=cv2.RETR_EXTERNAL,
+                                             method=cv2.CHAIN_APPROX_SIMPLE)
+
+        moving_area = sum(map(cv2.contourArea, contours))
+
+        #For visualiztaion
+        self._contours = contours #useful only for visualization
+        self._contour_tree = tree #Save contours
+        self._lastframe = curframe
+        
+        self.motion_level = 1.0 * moving_area / abs_diff_gray.size
+
+        return self.motion_level
+    
+    def visualize(self):
+        """
+        Draw contours around moving area.  Non-moving area is EWMA frame.
+        """
+        vis_frame = self.slow_avg.astype('u1').copy()
+
+        mask = vis_frame * 0
+        cv2.drawContours(mask, self._contours, -1, (255,255,255), cv2.FILLED);
+        vis_frame[mask==255] = self._lastframe[mask==255]
+        
+        cv2.drawContours(vis_frame, self._contours,
+                hierarchy=self._contour_tree,
+                contourIdx=-1,
+                color=CONTOUR_COLOR, thickness=2)
+        
+        return vis_frame
+
+
+class BGSubQuantifier(MotionQuantifier):
+    """
+    Quantifier based on openCV's BackgroundSubtractor class.  These 
+    already identify foreground and background objects through
+    various methods.  The fractoinal area identified as 'foreground'
+    is used for the motion level.
+    """
+
+    def __init__(self, init_frame, bgsub=None, 
+                 dilate_amt = .01, erode_amt = 0.01):
+        """
+        bgsub - An initialized cv2.BackgroundSubtractor.
+        dilate_amt - relative size of motion area dilation, between 0 and 1. 
+        erode_amt - relative size of motion area dilation, between 0 and 1.
+        """
+        assert isinstance(bgsub, cv2.BackgroundSubtractor)
+        
+        MotionQuantifier.__init__(self)
+
+        self.bgsub = bgsub
+
+
+        self._scale = int((init_frame.shape[0] * init_frame.shape[1])**.5)
+
+        self.dilate_iters = int(dilate_amt * self._scale)
+        self.erode_iters = int(erode_amt * self._scale)
+        
+        self._fgmask = self.bgsub.apply(init_frame)
+        
+        self.step(init_frame)
+
+
+                
+    def step(self, curframe):
+        self._lastframe = curframe
+        self.bgsub.apply(curframe, self._fgmask)
+
+        cv2.dilate(self._fgmask, kernel=None, iterations=self.dilate_iters,
+                   dst = self._fgmask)
+        
+        cv2.erode(self._fgmask, kernel=None, iterations=self.erode_iters,
+                  dst = self._fgmask)
+        
+        self.motion_level = (self._fgmask == 255).mean()
+
+        return self.motion_level
+    
+    def visualize(self):
+        """
+        Draw foreground normally and background at halved RGB values.
+        """
+        fg = self._fgmask == 255
+        vis_frame = self._lastframe.copy()
+        vis_frame[~fg] /= 2
+        #vis_frame = self.bgsub.getBackgroundImage().copy()
+        
+ #       vis_frame[self._fgmask] = self._lastframe[self._fgmask]
+ #       vis_frame[~self._fgmask] /= 2
+
+        return vis_frame
+
+
+
