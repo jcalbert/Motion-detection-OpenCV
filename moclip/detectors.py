@@ -30,8 +30,8 @@ if DOWNSAMPLE:
         def sampdown(im):
             big_edge = max(im.shape[0], im.shape[1])
             shrink_factor = 2**int(np.log2(big_edge / MIN_WIDTH))
-                fac = 1.0 / shrink_factor
-                im = cv2.resize(im, dsize=None, fx=fac, fy=fac, 
+            fac = 1.0 / shrink_factor
+            im = cv2.resize(im, dsize=None, fx=fac, fy=fac, 
                                 interpolation=cv2.INTER_AREA)
             return im
 
