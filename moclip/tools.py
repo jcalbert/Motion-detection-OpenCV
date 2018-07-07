@@ -11,9 +11,6 @@ from scipy.ndimage import maximum_filter1d
 import os
 from subprocess import Popen
 
-import warnings
-
-
 def get_motion_series(detector, frame_skip = None, preview=False):
     """
     Given an initialzed motion detector, produce a time series
