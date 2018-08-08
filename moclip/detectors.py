@@ -1,18 +1,9 @@
 import cv2
-import time
 
 import logging
 import sys
 
 import numpy  as np
-
-
-
-from subprocess import Popen
-import os
-import tempfile
-
-from scipy.ndimage import maximum_filter1d
 
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 log = logging.getLogger()
