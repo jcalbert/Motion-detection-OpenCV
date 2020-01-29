@@ -44,6 +44,11 @@ class ClipperMainWindow(QMainWindow):
         #restore all buttons to regular state.
         pass
 
+    @QtCore.pyqtSlot(str)
+    def log_msg(self, msg):
+        #self.ui.log.moveCursor(QtGui.QTextCursor.End) #Necessary?
+        self.ui.te_log.append(msg + '\n')
+
     def input_dialogue(self):
 
         filename, _ = QtWidgets.QFileDialog.getOpenFileName(
@@ -146,10 +151,6 @@ class ClipperMainWindow(QMainWindow):
     def interrupt(self):
         self.running = False
         raise NotImplementedError('Uh yeah this needs to happen.')
-
-
-    def log(self, msg):
-        do_some_logging_to(self.te_log)
 
 
 if __name__ == "__main__":
